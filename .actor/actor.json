@@ -8,6 +8,7 @@
   "buildTag": "latest",
   "input": "./input_schema.json",
   "readme": "./README.md",
+  "actorSpecification": 1,
   "environmentVariables": {
     "PYTHONUNBUFFERED": "1"
   },
