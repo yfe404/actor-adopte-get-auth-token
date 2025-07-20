@@ -1,13 +1,20 @@
 {
-	"actorSpecification": 1,
-	"name": "adopte-get-token-python",
-	"title": "Getting started with Python and Playwright",
-	"description": "Scrapes titles of websites using Playwright.",
-	"version": "0.0",
-	"buildTag": "latest",
-	"meta": {
-		"templateId": "python-playwright"
-	},
-	"input": "./input_schema.json",
-	"dockerfile": "../Dockerfile"
+  "name": "adopte-token-extractor",
+  "title": "Adopte.app Login & Token Extractor",
+  "description": "Logs into adopte.app in a real browser, grabs apiRefreshToken, exchanges it for an Auth token via /authtokens, and stores both tokens in the dataset. All traffic routed through an Apify FR Residential proxy.",
+  "version": "0.1",
+  "main": "src/main.py",
+  "dockerfile": "./Dockerfile",
+  "buildTag": "latest",
+  "input": "./input_schema.json",
+  "readme": "./README.md",
+  "environmentVariables": {
+    "PYTHONUNBUFFERED": "1"
+  },
+  "defaultRunOptions": {
+    "memoryMbytes": 2048,
+    "build": "latest",
+    "timeoutSecs": 1200
+  },
+  "category": "scraper"
 }
