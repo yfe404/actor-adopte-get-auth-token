@@ -1,14 +1,6 @@
-"""Apify Actor entry point: Adopte.app login + token extraction.
-
-• Uses Apify FR residential proxy (one single config shared by Playwright *and* requests).
-• Login done in Playwright → grabs `window.apiRefreshToken`.
-• `/authtokens` + `/boost` contacted via **requests** through the *same* proxy.
-• Built‑in retries + clear error messages if proxy tunnel cannot be established.
-"""
-
 from __future__ import annotations
 
-import asyncio
+from urllib.parse import quote
 
 import requests
 from apify import Actor
@@ -29,8 +21,6 @@ async def get_proxy() -> tuple[dict[str, str], dict]:
     proxy_info = (
         await proxy_cfg.new_proxy_info()
     )  # gives hostname, port, username, password
-
-    from urllib.parse import quote
 
     proxy_url = f"http://{quote(proxy_info.username)}:{quote(proxy_info.password)}@{proxy_info.hostname}:{proxy_info.port}"
     # requests uses single URL; Playwright needs split creds
@@ -147,7 +137,3 @@ async def main() -> None:
             }
         )
         Actor.log.info("Actor finished 🎉")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
