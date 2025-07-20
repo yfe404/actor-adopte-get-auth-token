@@ -1,0 +1,13 @@
+{
+	"actorSpecification": 1,
+	"name": "adopte-get-token-python",
+	"title": "Getting started with Python and Playwright",
+	"description": "Scrapes titles of websites using Playwright.",
+	"version": "0.0",
+	"buildTag": "latest",
+	"meta": {
+		"templateId": "python-playwright"
+	},
+	"input": "./input_schema.json",
+	"dockerfile": "../Dockerfile"
+}
