@@ -7,6 +7,9 @@
   "dockerfile": "./Dockerfile",
   "buildTag": "latest",
   "input": "./input_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
   "readme": "./README.md",
   "actorSpecification": 1,
   "environmentVariables": {
