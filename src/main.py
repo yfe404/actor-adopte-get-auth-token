@@ -4,7 +4,6 @@ from urllib.parse import quote
 
 import requests
 from apify import Actor
-from playwright.async_api import async_playwright
 
 PROXY_GROUP = "RESIDENTIAL"
 PROXY_COUNTRY = "FR"
@@ -41,49 +40,50 @@ async def main() -> None:
         inp = await Actor.get_input() or {}
         email: str | None = inp.get("email")
         password: str | None = inp.get("password")
-        headless: bool = inp.get("headless", True)
         if not email or not password:
             await Actor.fail("Input must contain email and password ❗️")
             return
 
         # Proxy (shared)
-        requests_proxies, playwright_proxy = await get_proxy()
+        requests_proxies, _ = await get_proxy()
 
-        # ────────────────────────────────────────────────────────────
-        # Playwright → fetch refresh token
-        # ────────────────────────────────────────────────────────────
+        auth_endpoint = "https://www.adopte.app/auth/login"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Platform": "web",
+        }
+        payload = {
+            "username": email,
+            "password": password,
+            "remember": "true",
+        }
+        resp = requests.post(
+            auth_endpoint,
+            headers=headers,
+            data=payload,
+            proxies=requests_proxies,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        Actor.log.info(f"✅ Status: {resp.status_code}")
+        # print("🔐 Login response:", resp.text)
+
+        # extract apiRefreshToken from response (html)
         api_refresh_token: str | None = None
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=headless,
-                args=["--disable-gpu"],
-                proxy=playwright_proxy,
+        if "apiRefreshToken" in resp.text:
+            # If the response contains the token, extract it
+            start_index = resp.text.index("apiRefreshToken") + len(
+                'apiRefreshToken = "'
             )
-            context = await browser.new_context()
-            # Give all navigations up to 60 s – the residential proxy can be slow
-            context.set_default_navigation_timeout(60_000)
-            page = await context.new_page()
-
-            try:
-                await page.goto(
-                    "https://www.adopte.app",
-                    wait_until="load",
-                    timeout=60_000,
-                )
-            except Exception as e:
-                await Actor.fail(f"Navigation to adopte.app failed: {e}")
-                return
-
-            # Wait for the login button to become visible
-            await page.wait_for_selector("#btn-display-login", timeout=20_000)
-            await page.click("#btn-display-login")
-            await page.fill("#mail", email)
-            await page.fill("#password", password)
-            await page.press("#password", "Enter")
-            Actor.log.info("Submitted login form – waiting for refresh‑token …")
-            await page.wait_for_function("window.apiRefreshToken", timeout=45_000)
-            api_refresh_token: str = await page.evaluate("window.apiRefreshToken")
-            Actor.log.info("apiRefreshToken captured ✅")
+            end_index = resp.text.index('",', start_index)
+            api_refresh_token = resp.text[start_index:end_index]
+            Actor.log.info("apiRefreshToken captured from response ✅")
+        else:
+            Actor.error("apiRefreshToken not found in response ❗️")
+            # exit with failure
+            await Actor.fail("apiRefreshToken not found in response ❗️")
 
         # ────────────────────────────────────────────────────────────
         # requests → /authtokens & /boost
@@ -108,8 +108,7 @@ async def main() -> None:
             timeout=10,
         )
         resp.raise_for_status()
-        print("✅ Status:", resp.status_code)
-        print("🔐 Token response:", resp.text)
+        Actor.log.info(f"✅ Status: {resp.status_code}")
 
         auth_token: str = resp.json()["data"][0]["id"]
         Actor.log.info("Auth token obtained ✅")
@@ -121,7 +120,7 @@ async def main() -> None:
             boost_url,
             headers=headers,
             proxies=requests_proxies,
-            timeout=10,
+            timeout=300,
         )
         Actor.log.info(f"/boost status {boost_resp.status_code}")
 
