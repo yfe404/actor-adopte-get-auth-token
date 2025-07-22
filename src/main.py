@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import quote
 
-import requests
+import httpx
 from apify import Actor
 
 PROXY_GROUP = "RESIDENTIAL"
@@ -10,8 +11,28 @@ PROXY_COUNTRY = "FR"
 API_BASE = "https://api.adopte.app/api/v4"
 
 
-async def get_proxy() -> tuple[dict[str, str], dict]:
-    """Create ONE proxy configuration and return (requests_proxies, playwright_proxy_dict)."""
+class RetryTransport(httpx.AsyncBaseTransport):
+    def __init__(self, retries=3, backoff=0.5):
+        self.retries = retries
+        self.backoff = backoff
+        self._transport = httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        last_exc = None
+        for attempt in range(self.retries):
+            try:
+                response = await self._transport.handle_async_request(request)
+                if response.status_code < 500:
+                    return response  # only retry on server errors
+            except httpx.RequestError as exc:
+                last_exc = exc
+            await asyncio.sleep(self.backoff * (2**attempt))  # exponential backoff
+        if last_exc:
+            raise last_exc
+        return response  # last response if not successful
+
+
+async def get_client() -> httpx.AsyncClient:
     proxy_cfg = await Actor.create_proxy_configuration(
         groups=[PROXY_GROUP], country_code=PROXY_COUNTRY
     )
@@ -22,14 +43,13 @@ async def get_proxy() -> tuple[dict[str, str], dict]:
     )  # gives hostname, port, username, password
 
     proxy_url = f"http://{quote(proxy_info.username)}:{quote(proxy_info.password)}@{proxy_info.hostname}:{proxy_info.port}"
-    # requests uses single URL; Playwright needs split creds
-    requests_proxies = {"http": proxy_url, "https": proxy_url}
-    playwright_proxy = {
-        "server": f"http://{proxy_info.hostname}:{proxy_info.port}",
-        "username": proxy_info.username,
-        "password": proxy_info.password,
-    }
-    return requests_proxies, playwright_proxy
+
+    timeout = httpx.Timeout(20.0, connect=10.0)
+    transport = RetryTransport(retries=5, backoff=1)
+
+    client = httpx.AsyncClient(timeout=timeout, transport=transport, proxy=proxy_url)
+
+    return client
 
 
 async def main() -> None:
@@ -44,9 +64,6 @@ async def main() -> None:
             await Actor.fail("Input must contain email and password ❗️")
             return
 
-        # Proxy (shared)
-        requests_proxies, _ = await get_proxy()
-
         auth_endpoint = "https://www.adopte.app/auth/login"
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
@@ -59,80 +76,57 @@ async def main() -> None:
             "password": password,
             "remember": "true",
         }
-        resp = requests.post(
-            auth_endpoint,
-            headers=headers,
-            data=payload,
-            proxies=requests_proxies,
-            timeout=60,
-        )
-        resp.raise_for_status()
-        Actor.log.info(f"✅ Status: {resp.status_code}")
-        # print("🔐 Login response:", resp.text)
 
-        # extract apiRefreshToken from response (html)
-        api_refresh_token: str | None = None
-        if "apiRefreshToken" in resp.text:
-            # If the response contains the token, extract it
-            start_index = resp.text.index("apiRefreshToken") + len(
-                'apiRefreshToken = "'
+        async with await get_client() as client:
+            resp = await client.post(
+                auth_endpoint, headers=headers, data=payload, follow_redirects=True
             )
-            end_index = resp.text.index('",', start_index)
-            api_refresh_token = resp.text[start_index:end_index]
-            Actor.log.info("apiRefreshToken captured from response ✅")
-        else:
-            Actor.error("apiRefreshToken not found in response ❗️")
-            # exit with failure
-            await Actor.fail("apiRefreshToken not found in response ❗️")
+            resp.raise_for_status()
+            Actor.log.info(f"✅ Status: {resp.status_code}")
 
-        # ────────────────────────────────────────────────────────────
-        # requests → /authtokens & /boost
-        # ────────────────────────────────────────────────────────────
+            # extract apiRefreshToken from response (html)
+            api_refresh_token: str | None = None
+            if "apiRefreshToken" in resp.text:
+                start_index = resp.text.index("apiRefreshToken") + len(
+                    'apiRefreshToken = "'
+                )
+                end_index = resp.text.index('",', start_index)
+                api_refresh_token = resp.text[start_index:end_index]
+                Actor.log.info("apiRefreshToken captured from response ✅")
+            else:
+                Actor.log.error("apiRefreshToken not found in response ❗️")
+                # exit with failure
+                await Actor.fail("apiRefreshToken not found in response ❗️")
+                return
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Platform": "web",
-        }
+            # ────────────────────────────────────────────────────────────
+            # requests → /authtokens & /boost
+            # ────────────────────────────────────────────────────────────
 
-        data = {
-            "credentials": api_refresh_token,
-            "type": "2",
-        }
-        resp = requests.post(
-            "https://api.adopte.app/api/v4/authtokens",
-            headers=headers,
-            data=data,
-            proxies=requests_proxies,
-            timeout=10,
-        )
-        resp.raise_for_status()
-        Actor.log.info(f"✅ Status: {resp.status_code}")
-
-        auth_token: str = resp.json()["data"][0]["id"]
-        Actor.log.info("Auth token obtained ✅")
-
-        headers["Authorization"] = f"Bearer {auth_token}"
-        # GET /boost
-        boost_url = "https://api.adopte.app/api/v4/boost"
-        boost_resp = requests.get(
-            boost_url,
-            headers=headers,
-            proxies=requests_proxies,
-            timeout=300,
-        )
-        Actor.log.info(f"/boost status {boost_resp.status_code}")
-
-        # Push result
-        await Actor.push_data(
-            {
-                "success": True,
-                "apiRefreshToken": api_refresh_token,
-                "authToken": auth_token,
-                "authtokensStatus": resp.status_code,
-                "boostStatus": boost_resp.status_code,
-                "boostBody": boost_resp.text,
+            data = {
+                "credentials": api_refresh_token,
+                "type": "2",
             }
-        )
-        Actor.log.info("Actor finished 🎉")
+
+            # Using httpx client instead of requests for consistency
+            resp = await client.post(
+                "https://api.adopte.app/api/v4/authtokens",
+                headers=headers,
+                data=data,
+            )
+            resp.raise_for_status()
+            Actor.log.info(f"✅ Status: {resp.status_code}")
+
+            auth_token: str = resp.json()["data"][0]["id"]
+            Actor.log.info("Auth token obtained ✅")
+
+            # Push result
+            await Actor.push_data(
+                {
+                    "success": True,
+                    "apiRefreshToken": api_refresh_token,
+                    "authToken": auth_token,
+                    "authtokensStatus": resp.status_code,
+                }
+            )
+            Actor.log.info("Actor finished 🎉")
