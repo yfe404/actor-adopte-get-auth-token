@@ -4,8 +4,6 @@
         "apiRefreshToken": "string",
         "authToken": "string",
         "authTokensStatus": "number",
-        "boostBody": "string",
-        "boostStatus": "date",
         "success": "boolean"
     },
     "views": {
@@ -16,8 +14,6 @@
                     "apiRefreshToken",
                     "authToken",
                     "authtokensStatus",
-                    "boostBody",
-                    "boostStatus",
                     "success"
                 ]
             },
@@ -27,8 +23,6 @@
                     "apiRefreshToken": { "label": "JWT refresh token", "format": "text" },
                     "authToken": { "label": "JWT authentication token", "format": "text" },
                     "authTokenStatus": { "label": "https code auth token response", "format": "number" },
-                    "boostBody": { "label": "GET /boost response body", "format": "object" },
-                    "boostStatus": { "label": "GET /boost response status", "format": "number" },
                     "success": { "label": "Run status", "format": "boolean" }
                 }
             }
